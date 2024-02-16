@@ -1,0 +1,110 @@
+[package]
+name = "hickory-dns-v6synth"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = ["sqlite", "resolver", "native-certs", "ascii-art"]
+
+# if enabled, the hickory-dns binary will print ascii-art on start, disable to reduce the binary size
+ascii-art = []
+
+dnssec-openssl = [
+    "dnssec",
+    "hickory-client/dnssec-openssl",
+    "hickory-proto/dnssec-openssl",
+    "hickory-server/dnssec-openssl",
+]
+dnssec-ring = [
+    "dnssec",
+    "hickory-client/dnssec-ring",
+    "hickory-proto/dnssec-ring",
+    "hickory-server/dnssec-ring",
+]
+dnssec = []
+recursor = ["hickory-server/recursor"]
+# Recursive Resolution is Experimental!
+resolver = ["hickory-server/resolver"]
+sqlite = ["hickory-server/sqlite"]
+
+# TODO: Need to figure out how to be consistent with ring/openssl usage...
+# dns-over-https-openssl = ["dns-over-openssl", "hickory-client/dns-over-https-openssl", "dns-over-https"]
+dns-over-https-rustls = [
+    "dns-over-https",
+    "dns-over-rustls",
+    "hickory-proto/dns-over-https-rustls",
+    "hickory-client/dns-over-https-rustls",
+    "hickory-server/dns-over-https-rustls",
+]
+dns-over-https = ["hickory-server/dns-over-https"]
+dns-over-quic = ["dns-over-rustls", "hickory-server/dns-over-quic"]
+dns-over-h3 = ["dns-over-rustls", "hickory-server/dns-over-h3"]
+
+# TODO: migrate all tls and tls-openssl features to dns-over-tls, et al
+dns-over-openssl = [
+    "dns-over-tls",
+    "dnssec-openssl",
+    "hickory-proto/dns-over-openssl",
+    "hickory-client/dns-over-openssl",
+    "hickory-server/dns-over-openssl",
+]
+dns-over-rustls = [
+    "dns-over-tls",
+    "dnssec-ring",
+    "rustls",
+    "hickory-proto/dns-over-rustls",
+    "hickory-client/dns-over-rustls",
+    "hickory-server/dns-over-rustls",
+]
+dns-over-tls = []
+
+# This is a deprecated feature...
+tls-openssl = ["dns-over-openssl"]
+tls = ["dns-over-openssl"]
+
+# WARNING: there is a bug in the mutual tls auth code at the moment see issue #100
+# mtls = ["hickory-client/mtls"]
+
+webpki-roots = ["hickory-client/webpki-roots"]
+native-certs = ["hickory-client/native-certs"]
+rustls = ["dep:rustls"]
+
+[dependencies]
+# clap features:
+# - suggestion for advanced help with error in cli
+# - derive for clap derive api
+# - help to generate --help
+clap = { version = "4.5.1", default-features = false, features = [
+    "std",
+    "cargo",
+    "help",
+    "derive",
+    "suggestions",
+] }
+futures-util = { version = "0.3.30", default-features = false, features = [
+    "std",
+] }
+hickory-client = "0.24.0"
+hickory-proto = "0.24.0"
+hickory-server = { version = "0.24.0", features = ["toml"] }
+rustls = { version = "0.22.2", optional = true }
+time = "0.3.34"
+tokio = { version = "1.36.0", features = ["time", "rt"] }
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = [
+    "std",
+    "fmt",
+    "env-filter",
+] }
+
+[dev-dependencies]
+hickory-proto = { version = "0.24.0", features = [
+    "testing",
+    "dns-over-native-tls",
+] }
+hickory-resolver = "0.24.0"
+native-tls = "0.2.11"
+regex = "1.10.3"
+webpki-roots = "0.26.1"

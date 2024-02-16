@@ -353,12 +353,11 @@ fn main() {
     let directory_config = config.get_directory().to_path_buf();
     let zonedir = args.zonedir.clone();
     let zone_dir = zonedir.unwrap_or_else(|| directory_config.clone());
-    let script_dir = args.scriptdir.clone()
-        .unwrap_or_else(|| {
-            let mut script_dir = zone_dir.clone();
-            script_dir.push("scripts");
-            script_dir
-        });
+    let script_dir = args.scriptdir.clone().unwrap_or_else(|| {
+        let mut script_dir = zone_dir.clone();
+        script_dir.push("scripts");
+        script_dir
+    });
 
     // TODO: allow for num threads configured...
     let mut runtime = runtime::Builder::new_multi_thread()

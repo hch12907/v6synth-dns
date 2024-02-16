@@ -6,7 +6,7 @@ fn init() {
     }
 }
 
-fn main(hostname, ipv4, cname) {
+fn main(hostname, ipv4, prefix_size, cname) {
     cname.remove(".akamaiedge.net."); // obtain the customer string
 
     let customer = cname.split('.');

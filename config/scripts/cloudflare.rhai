@@ -18,10 +18,11 @@ fn init() {
             "172.64.0.0/13",
             "131.0.72.0/22",
         ],
+        cname_filter: "",
     }
 }
 
-fn main(hostname, ipv4, cname) {
+fn main(hostname, ipv4, prefix_size, cname) {
     let octets = ipv4.split('.');
     let first = to_hex(parse_int(octets[0]) * 256 + parse_int(octets[1]));
     let second = to_hex(parse_int(octets[2]) * 256 + parse_int(octets[3]));

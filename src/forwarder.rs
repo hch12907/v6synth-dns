@@ -160,12 +160,15 @@ impl Authority for V6SynthAuthority {
                         RData::A(a) => Some(a.0.clone()),
                         _ => None,
                     })
-                    .find(|addr| {
+                    .filter_map(|addr| {
                         script
                             .ipv4_ranges()
                             .iter()
-                            .any(|network| network.contains(*addr))
-                    });
+                            .filter(|network| network.contains(addr))
+                            .nth(0)
+                            .map(|network| (addr, network.prefix() as u32))
+                    })
+                    .nth(0);
 
                 let cname = if !script.cname_filter().is_empty() {
                     records
@@ -181,10 +184,10 @@ impl Authority for V6SynthAuthority {
                 };
 
                 if ipv4.is_some() || !cname.is_empty() {
-                    let ipv4 = ipv4.unwrap_or(Ipv4Addr::new(0, 0, 0, 0));
+                    let (ipv4, size) = ipv4.unwrap_or((Ipv4Addr::new(0, 0, 0, 0), 0));
 
                     let aaaa = ScriptExecution::from_ast(script.ast())
-                        .execute(name.to_string(), ipv4, cname, self.resolver.clone())
+                        .execute(name.to_string(), ipv4, size, cname, self.resolver.clone())
                         .await;
 
                     if let Some(ipv6) = aaaa {

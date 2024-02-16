@@ -111,10 +111,11 @@ impl ScriptExecution {
         self,
         hostname: String,
         ipv4: Ipv4Addr,
+        size: u32,
         cname: String,
         resolver: TokioAsyncResolver,
     ) -> Option<Ipv6Addr> {
-        let args = (hostname, ipv4.to_string(), cname);
+        let args = (hostname, ipv4.to_string(), size as i64, cname);
 
         let result = tokio::task::spawn_blocking(move || {
             let ast = self.ast;

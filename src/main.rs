@@ -30,11 +30,12 @@
     missing_docs,
     non_snake_case,
     non_upper_case_globals,
-    rust_2018_idioms,
-    unreachable_pub
+    rust_2018_idioms
 )]
 #![recursion_limit = "128"]
 #![allow(clippy::redundant_clone)]
+
+mod forwarder;
 
 use std::{
     env, fmt,
@@ -60,8 +61,6 @@ use tracing_subscriber::{
 use hickory_client::rr::Name;
 #[cfg(feature = "dns-over-tls")]
 use hickory_server::config::dnssec::{self, TlsCertConfig};
-#[cfg(feature = "resolver")]
-use hickory_server::store::forwarder::ForwardAuthority;
 #[cfg(feature = "recursor")]
 use hickory_server::store::recursor::RecursiveAuthority;
 #[cfg(feature = "sqlite")]
@@ -75,6 +74,8 @@ use hickory_server::{
         StoreConfig,
     },
 };
+
+use crate::forwarder::V6SynthAuthority;
 
 #[cfg(feature = "dnssec")]
 use {hickory_client::rr::rdata::key::KeyUsage, hickory_server::authority::DnssecAuthority};
@@ -197,9 +198,8 @@ async fn load_zone(
             load_keys(&mut authority, zone_name_for_signer, zone_config).await?;
             Box::new(Arc::new(authority)) as Box<dyn AuthorityObject>
         }
-        #[cfg(feature = "resolver")]
         Some(StoreConfig::Forward(ref config)) => {
-            let forwarder = ForwardAuthority::try_from_config(zone_name, zone_type, config)?;
+            let forwarder = V6SynthAuthority::try_from_config(zone_name, zone_type, config)?;
 
             Box::new(Arc::new(forwarder)) as Box<dyn AuthorityObject>
         }

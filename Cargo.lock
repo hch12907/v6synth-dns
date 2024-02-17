@@ -516,6 +516,7 @@ dependencies = [
 name = "hickory-dns-v6synth"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "clap",
  "futures-util",
  "hickory-client",

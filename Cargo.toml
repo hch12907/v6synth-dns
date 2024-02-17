@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["sqlite", "resolver", "native-certs", "ascii-art", "dns-over-rustls"]
+default = ["sqlite", "native-certs", "ascii-art", "dns-over-rustls"]
 
 # if enabled, the hickory-dns binary will print ascii-art on start, disable to reduce the binary size
 ascii-art = []
@@ -99,6 +99,7 @@ tracing-subscriber = { version = "0.3.18", features = [
     "fmt",
     "env-filter",
 ] }
+async-trait = "0.1.77"
 
 [dev-dependencies]
 hickory-proto = { version = "0.24.0", features = [

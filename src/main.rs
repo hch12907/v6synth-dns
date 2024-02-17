@@ -36,6 +36,7 @@
 #![allow(clippy::redundant_clone)]
 
 mod forwarder;
+mod script;
 
 use std::{
     env, fmt,
@@ -143,6 +144,7 @@ async fn load_keys<T>(
 #[warn(clippy::wildcard_enum_match_arm)] // make sure all cases are handled despite of non_exhaustive
 async fn load_zone(
     zone_dir: &Path,
+    script_dir: &Path,
     zone_config: &ZoneConfig,
 ) -> Result<Box<dyn AuthorityObject>, String> {
     debug!("loading zone with config: {:#?}", zone_config);
@@ -199,7 +201,9 @@ async fn load_zone(
             Box::new(Arc::new(authority)) as Box<dyn AuthorityObject>
         }
         Some(StoreConfig::Forward(ref config)) => {
-            let forwarder = V6SynthAuthority::try_from_config(zone_name, zone_type, config)?;
+            let scripts = script::load_scripts(&script_dir)
+                .expect("unable to load scripts");
+            let forwarder = V6SynthAuthority::try_from_config(zone_name, zone_type, config, scripts)?;
 
             Box::new(Arc::new(forwarder)) as Box<dyn AuthorityObject>
         }
@@ -297,6 +301,10 @@ struct Cli {
     #[clap(short = 'z', long = "zonedir", value_name = "DIR", value_hint=clap::ValueHint::DirPath)]
     pub(crate) zonedir: Option<PathBuf>,
 
+    /// Path to the root directory for all script files.
+    #[clap(short = 'z', long = "scriptdir", value_name = "DIR", value_hint=clap::ValueHint::DirPath)]
+    pub(crate) scriptdir: Option<PathBuf>,
+
     /// Listening port for DNS queries,
     /// overrides any value in config file
     #[clap(short = 'p', long = "port", value_name = "PORT")]
@@ -343,10 +351,8 @@ fn main() {
         .unwrap_or_else(|e| panic!("could not read config {}: {:?}", config_path.display(), e));
     let directory_config = config.get_directory().to_path_buf();
     let zonedir = args.zonedir.clone();
-    let zone_dir: PathBuf = zonedir
-        .as_ref()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| directory_config.clone());
+    let zone_dir = zonedir.unwrap_or_else(|| directory_config.clone());
+    let script_dir = args.scriptdir.clone().unwrap_or_else(|| zone_dir.clone());
 
     // TODO: allow for num threads configured...
     let mut runtime = runtime::Builder::new_multi_thread()
@@ -362,7 +368,7 @@ fn main() {
             .get_zone()
             .unwrap_or_else(|_| panic!("bad zone name in {:?}", config_path));
 
-        match runtime.block_on(load_zone(&zone_dir, zone)) {
+        match runtime.block_on(load_zone(&zone_dir, &script_dir, zone)) {
             Ok(authority) => catalog.upsert(zone_name.into(), authority),
             Err(error) => panic!("could not load zone {}: {}", zone_name, error),
         }

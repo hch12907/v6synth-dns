@@ -5,9 +5,13 @@
 // https://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
-use std::io;
+use std::{io, sync::Arc};
 
+use hickory_proto::{op::Query, rr::{rdata::AAAA, RData}};
+use hickory_resolver::lookup::Lookup;
 use hickory_resolver::name_server::TokioConnectionProvider;
+use ipnetwork::Ipv4Network;
+use rhai::AST;
 use tracing::{debug, info};
 
 use hickory_server::{
@@ -23,12 +27,15 @@ use hickory_server::{
     store::forwarder::ForwardConfig,
 };
 
+use crate::script::ScriptExecution;
+
 /// An authority that will forward resolutions to upstream resolvers.
 ///
 /// This uses the hickory-resolver for resolving requests.
 pub struct V6SynthAuthority {
     origin: LowerName,
     resolver: TokioAsyncResolver,
+    scripts: Vec<(AST, Vec<Ipv4Network>)>,
 }
 
 impl V6SynthAuthority {
@@ -37,6 +44,7 @@ impl V6SynthAuthority {
         origin: Name,
         _zone_type: ZoneType,
         config: &ForwardConfig,
+        scripts: Vec<(AST, Vec<Ipv4Network>)>,
     ) -> Result<Self, String> {
         info!("loading forwarder config: {}", origin);
 
@@ -72,6 +80,7 @@ impl V6SynthAuthority {
         Ok(Self {
             origin: origin.into(),
             resolver,
+            scripts,
         })
     }
 }
@@ -116,18 +125,58 @@ impl Authority for V6SynthAuthority {
         debug!("forwarding lookup: {} {}", name, rtype);
         let resolve = self.resolver.lookup(name.clone(), rtype).await;
 
-        if rtype == RecordType::AAAA {
-            // The client is looking for an IPv6 address to the domain. If the
-            // upstream DNS server returns no AAAA record, we can intervene if
-            // the website is behind a CDN
-            let has_aaaa = resolve
+        // The client is looking for an IPv6 address to the domain. If the
+        // upstream DNS server returns no AAAA record, we can intervene if
+        // the website is behind a CDN
+        let has_aaaa = resolve
                 .as_ref()
                 .map(|lookup| lookup.record_iter())
                 .map(|mut recs| recs.any(|rec| rec.record_type() == RecordType::AAAA))
                 .unwrap_or(false);
 
-            if !has_aaaa {
-                println!("Oopsie! {name} is IPv4-only.");
+        if rtype == RecordType::AAAA && !has_aaaa {
+            info!("{} is IPv4-only, yet AAAA was requested. Attempting AAAA synthesis", &name);
+            let a = self
+                .resolver
+                .lookup(name.clone(), RecordType::A)
+                .await
+                .map(|lookup| {
+                    lookup
+                        .record_iter()
+                        .filter(|rec| rec.record_type() == RecordType::A)
+                        .flat_map(|rec| rec.data())
+                        .flat_map(|data| match data {
+                            RData::A(addr) => Some(addr.0),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+
+            for (script, range) in &self.scripts {
+                // check if the address in A record is in range of any script
+                let ipv4 = a
+                    .iter()
+                    .find(|addr| range.iter().any(|network| network.contains(**addr)));
+
+                if let Some(ipv4) = ipv4 {
+                    let aaaa = ScriptExecution::from_ast(script)
+                        .execute(name.to_string(), *ipv4, self.resolver.clone())
+                        .await;
+
+                    if let Some(ipv6) = aaaa {
+                        let record = Record::from_rdata(name.into(), 1, RData::AAAA(AAAA(ipv6)));
+
+                        let mut query = Query::new();
+                        query
+                            .set_name(name.into())
+                            .set_query_type(RecordType::AAAA);
+
+                        let lookup = Lookup::new_with_max_ttl(query, Arc::from([record]));
+
+                        return Ok(ForwardLookup(lookup))
+                    }
+                }
             }
         }
 

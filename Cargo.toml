@@ -92,7 +92,7 @@ hickory-proto = "0.24.0"
 hickory-server = { version = "0.24.0", features = ["toml"] }
 rustls = { version = "0.22.2", optional = true }
 time = "0.3.34"
-tokio = { version = "1.36.0", features = ["time", "rt"] }
+tokio = { version = "1.36.0", features = ["time", "rt", "sync"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = [
     "std",
@@ -100,6 +100,11 @@ tracing-subscriber = { version = "0.3.18", features = [
     "env-filter",
 ] }
 async-trait = "0.1.77"
+rhai = { version = "1.17.1", features = ["serde", "sync"] }
+serde = "1.0.196"
+serde_derive = "1.0.196"
+ipnetwork = "0.20.0"
+async-channel = "2.2.0"
 
 [dev-dependencies]
 hickory-proto = { version = "0.24.0", features = [

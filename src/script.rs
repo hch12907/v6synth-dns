@@ -13,7 +13,7 @@ use rhai::{Dynamic, Engine, EvalAltResult, Scope, AST};
 use serde::de::IntoDeserializer;
 use serde::Deserialize;
 use tokio::time::timeout;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 pub struct Script {
     ast: AST,
@@ -55,16 +55,8 @@ struct ScriptResolver {
     channel_to_host: Receiver<ScriptCommand>,
 }
 
-pub struct ScriptExecution {
-    engine: Engine,
-    resolver: ScriptResolver,
-    ast: AST,
-}
-
-impl ScriptExecution {
-    pub fn from_ast(ast: &AST) -> Self {
-        let mut engine = Engine::new();
-
+impl ScriptResolver {
+    fn new(engine: &mut Engine) -> Self {
         // TH = To Host, TS = To Script
         let (ts_sender, ts_receiver) = async_channel::bounded(1);
         let (th_sender, th_receiver) = async_channel::bounded(1);
@@ -98,11 +90,90 @@ impl ScriptExecution {
         );
 
         Self {
+            channel_to_script: ts_sender,
+            channel_to_host: th_receiver,
+        }
+    }
+
+    async fn execute_alongside_script(self, resolver: TokioAsyncResolver) {
+        let result = tokio::task::spawn(async move {
+            macro_rules! dns_record {
+                ($hostname:expr, $record_type:expr, $rdata:path) => {{
+                    let reply = timeout(
+                        Duration::from_secs(1),
+                        resolver.lookup($hostname, $record_type),
+                    )
+                    .await
+                    .ok();
+
+                    let reply = reply
+                        .and_then(|result| result.ok())
+                        .and_then(|lookup| {
+                            lookup
+                                .record_iter()
+                                .nth(0)
+                                .and_then(|rec| match rec.data() {
+                                    Some($rdata(data)) => Some(data.to_string()),
+                                    _ => None,
+                                })
+                        })
+                        .unwrap_or_default();
+
+                    self.channel_to_script
+                        .send(ScriptReply::Resolved(reply))
+                        .await
+                        .unwrap();
+                }};
+            }
+
+            loop {
+                match self.channel_to_host.recv().await {
+                    Ok(ScriptCommand::ResolveA(hostname)) => {
+                        dns_record!(hostname, RecordType::A, RData::A)
+                    }
+                    Ok(ScriptCommand::ResolveAAAA(hostname)) => {
+                        dns_record!(hostname, RecordType::AAAA, RData::AAAA)
+                    }
+                    Ok(ScriptCommand::ResolveCNAME(hostname)) => {
+                        dns_record!(hostname, RecordType::CNAME, RData::CNAME)
+                    }
+                    Ok(ScriptCommand::ResolveNS(hostname)) => {
+                        dns_record!(hostname, RecordType::NS, RData::NS)
+                    }
+                    Ok(ScriptCommand::ResolveSOA(hostname)) => {
+                        dns_record!(hostname, RecordType::SOA, RData::SOA)
+                    }
+                    Ok(ScriptCommand::ResolveTXT(hostname)) => {
+                        dns_record!(hostname, RecordType::TXT, RData::TXT)
+                    }
+                    Err(async_channel::RecvError) => break,
+                }
+            }
+        })
+        .await;
+
+        if let Err(e) = result {
+            if e.is_panic() {
+                error!("the script resolver panicked during execution");
+            }
+        }
+    }
+}
+
+pub struct ScriptExecution {
+    engine: Engine,
+    resolver: ScriptResolver,
+    ast: AST,
+}
+
+impl ScriptExecution {
+    pub fn from_ast(ast: &AST) -> Self {
+        let mut engine = Engine::new();
+        let resolver = ScriptResolver::new(&mut engine);
+
+        Self {
             engine,
-            resolver: ScriptResolver {
-                channel_to_script: ts_sender,
-                channel_to_host: th_receiver,
-            },
+            resolver,
             ast: ast.clone(),
         }
     }
@@ -131,62 +202,7 @@ impl ScriptExecution {
             result.ok()
         });
 
-        let _ = tokio::task::spawn(async move {
-            macro_rules! dns_record {
-                ($hostname:expr, $record_type:expr, $rdata:path) => {{
-                    let reply = timeout(
-                        Duration::from_secs(1),
-                        resolver.lookup($hostname, $record_type),
-                    )
-                    .await
-                    .ok();
-
-                    let reply = reply
-                        .and_then(|result| result.ok())
-                        .and_then(|lookup| {
-                            lookup
-                                .record_iter()
-                                .nth(0)
-                                .and_then(|rec| match rec.data() {
-                                    Some($rdata(data)) => Some(data.to_string()),
-                                    _ => None,
-                                })
-                        })
-                        .unwrap_or_default();
-
-                    self.resolver
-                        .channel_to_script
-                        .send(ScriptReply::Resolved(reply))
-                        .await
-                        .unwrap();
-                }};
-            }
-
-            loop {
-                match self.resolver.channel_to_host.recv().await {
-                    Ok(ScriptCommand::ResolveA(hostname)) => {
-                        dns_record!(hostname, RecordType::A, RData::A)
-                    }
-                    Ok(ScriptCommand::ResolveAAAA(hostname)) => {
-                        dns_record!(hostname, RecordType::AAAA, RData::AAAA)
-                    }
-                    Ok(ScriptCommand::ResolveCNAME(hostname)) => {
-                        dns_record!(hostname, RecordType::CNAME, RData::CNAME)
-                    }
-                    Ok(ScriptCommand::ResolveNS(hostname)) => {
-                        dns_record!(hostname, RecordType::NS, RData::NS)
-                    }
-                    Ok(ScriptCommand::ResolveSOA(hostname)) => {
-                        dns_record!(hostname, RecordType::SOA, RData::SOA)
-                    }
-                    Ok(ScriptCommand::ResolveTXT(hostname)) => {
-                        dns_record!(hostname, RecordType::TXT, RData::TXT)
-                    }
-                    Err(async_channel::RecvError) => break,
-                }
-            }
-        })
-        .await;
+        self.resolver.execute_alongside_script(resolver).await;
 
         let result = result.await.ok()??;
         result.parse::<Ipv6Addr>().ok()

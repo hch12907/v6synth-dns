@@ -55,7 +55,9 @@ fn main(hostname, ipv4, prefix_size, cname) {
 
         if !fastly_v6_prefix.is_empty() {
             let octets = ipv4.split('.');
-            let v6_suffix = ((parse_int(octets[2]) & 0x3F) << 8) + parse_int(octets[3]);
+            let first = parse_int(octets[2]) & 0x3F;
+            let second = parse_int(octets[3]);
+            let v6_suffix = (first << 8) + second;
 
             // Yes, we reinterpret the decimal number as hex. Thus, 396 becomes 0x396.
             // What the hell, fastly?

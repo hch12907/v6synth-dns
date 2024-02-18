@@ -11,7 +11,7 @@ use hickory_proto::{
     op::Query,
     rr::{rdata::AAAA, RData},
 };
-use hickory_resolver::{error::ResolveErrorKind, lookup::Lookup};
+use hickory_resolver::{error::ResolveErrorKind, lookup::Lookup, Hosts};
 use hickory_resolver::name_server::TokioConnectionProvider;
 use tracing::{debug, info};
 
@@ -37,6 +37,7 @@ pub struct V6SynthAuthority {
     origin: LowerName,
     resolver: TokioAsyncResolver,
     scripts: Vec<Script>,
+    hosts: Option<Hosts>,
 }
 
 impl V6SynthAuthority {
@@ -73,6 +74,8 @@ impl V6SynthAuthority {
 
         let config = ResolverConfig::from_parts(None, vec![], name_servers);
 
+        let hosts = options.use_hosts_file.then(|| Hosts::new());
+
         let resolver = TokioAsyncResolver::new(config, options, TokioConnectionProvider::default());
 
         info!("forward resolver configured: {}: ", origin);
@@ -82,6 +85,7 @@ impl V6SynthAuthority {
             origin: origin.into(),
             resolver,
             scripts,
+            hosts,
         })
     }
 }
@@ -124,6 +128,18 @@ impl Authority for V6SynthAuthority {
         debug_assert!(self.origin.zone_of(name));
 
         debug!("forwarding lookup: {} {}", name, rtype);
+
+        if (rtype == RecordType::A || rtype == RecordType::AAAA) && self.hosts.is_some() {
+            let hosts = self.hosts.as_ref().unwrap();
+
+            let mut name = Name::from(name.clone());
+            name.set_fqdn(false);
+
+            if let Some(lookup) = hosts.lookup_static_host(&Query::query(name, rtype)) {
+                return Ok(ForwardLookup::Hosts(lookup))
+            }
+        };
+
         let resolve = self.resolver.lookup(name.clone(), rtype).await;
 
         // The client is looking for an IPv6 address to the domain. If the
@@ -198,13 +214,13 @@ impl Authority for V6SynthAuthority {
 
                         let lookup = Lookup::new_with_max_ttl(query, Arc::from([record]));
 
-                        return Ok(ForwardLookup(lookup));
+                        return Ok(ForwardLookup::Resolver(lookup));
                     }
                 }
             }
         }
 
-        resolve.map(ForwardLookup).map_err(|e| match e.kind() {
+        resolve.map(ForwardLookup::Resolver).map_err(|e| match e.kind() {
             ResolveErrorKind::NoRecordsFound { response_code, .. } => {
                 if *response_code != ResponseCode::NoError {
                     LookupError::from(*response_code)
@@ -245,15 +261,24 @@ impl Authority for V6SynthAuthority {
 /// A structure that holds the results of a forwarding lookup.
 ///
 /// This exposes an iterator interface for consumption downstream.
-pub struct ForwardLookup(pub ResolverLookup);
+pub enum ForwardLookup {
+    Hosts(Lookup),
+    Resolver(ResolverLookup),
+}
 
 impl LookupObject for ForwardLookup {
     fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        match self {
+            Self::Hosts(h) => h.is_empty(),
+            Self::Resolver(r) => r.is_empty(),
+        }
     }
 
     fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = &'a Record> + Send + 'a> {
-        Box::new(self.0.record_iter())
+        match self {
+            Self::Hosts(h) => Box::new(h.record_iter()),
+            Self::Resolver(r) => Box::new(r.record_iter()),
+        }
     }
 
     fn take_additionals(&mut self) -> Option<Box<dyn LookupObject>> {

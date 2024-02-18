@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["sqlite", "native-certs", "ascii-art", "dns-over-rustls"]
+default = ["native-certs", "ascii-art", "dns-over-rustls"]
 
 # if enabled, the hickory-dns binary will print ascii-art on start, disable to reduce the binary size
 ascii-art = []

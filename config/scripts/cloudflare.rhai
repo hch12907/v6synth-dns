@@ -21,9 +21,10 @@ fn init() {
     }
 }
 
-fn main(hostname, ipv4) {
+fn main(hostname, ipv4, cname) {
     let octets = ipv4.split('.');
     let first = to_hex(parse_int(octets[0]) * 256 + parse_int(octets[1]));
     let second = to_hex(parse_int(octets[2]) * 256 + parse_int(octets[3]));
-    return "2600:4700::" + first + ":" + second;
+    let cloudflare = resolve("www.cloudflare.com", "AAAA");
+    return cloudflare.split("::")[0] + "::" + first + ":" + second;
 }

@@ -15,6 +15,26 @@ use serde::Deserialize;
 use tokio::time::timeout;
 use tracing::{info, warn};
 
+pub struct Script {
+    ast: AST,
+    ipv4_ranges: Vec<Ipv4Network>,
+    cname_filter: String,
+}
+
+impl Script {
+    pub fn ast(&self) -> &AST {
+        &self.ast
+    }
+
+    pub fn ipv4_ranges(&self) -> &[Ipv4Network] {
+        &self.ipv4_ranges
+    }
+
+    pub fn cname_filter(&self) -> &str {
+        &self.cname_filter
+    }
+}
+
 enum ScriptCommand {
     ResolveA(String),
     ResolveAAAA(String),
@@ -91,9 +111,10 @@ impl ScriptExecution {
         self,
         hostname: String,
         ipv4: Ipv4Addr,
+        cname: String,
         resolver: TokioAsyncResolver,
     ) -> Option<Ipv6Addr> {
-        let args = (hostname, ipv4.to_string());
+        let args = (hostname, ipv4.to_string(), cname);
 
         let result = tokio::task::spawn_blocking(move || {
             let ast = self.ast;
@@ -171,7 +192,7 @@ impl ScriptExecution {
     }
 }
 
-pub fn load_scripts(dir_path: &Path) -> Result<Vec<(AST, Vec<Ipv4Network>)>, Box<EvalAltResult>> {
+pub fn load_scripts(dir_path: &Path) -> Result<Vec<Script>, Box<EvalAltResult>> {
     let script_dir = dir_path
         .read_dir()
         .expect("unable to open script directory");
@@ -206,11 +227,17 @@ pub fn load_scripts(dir_path: &Path) -> Result<Vec<(AST, Vec<Ipv4Network>)>, Box
                 struct InitInfo {
                     priority: Option<i64>,
                     ipv4_ranges: Vec<Ipv4Network>,
+                    cname_filter: Option<String>,
                 }
 
                 if let Ok(val) = InitInfo::deserialize(info.into_deserializer()) {
                     let priority = val.priority.unwrap_or(0);
-                    asts.push((priority, ast, val.ipv4_ranges));
+                    let script = Script {
+                        ast,
+                        ipv4_ranges: val.ipv4_ranges,
+                        cname_filter: val.cname_filter.unwrap_or_default(),
+                    };
+                    asts.push((priority, script));
                 } else {
                     panic!("the init() of a script returned unexpected value");
                 }
@@ -218,9 +245,9 @@ pub fn load_scripts(dir_path: &Path) -> Result<Vec<(AST, Vec<Ipv4Network>)>, Box
         }
     }
 
-    asts.sort_by_key(|(priority, _, _)| -priority);
+    asts.sort_by_key(|(priority, _)| -priority);
 
-    Ok(asts.into_iter().map(|(_, script, ranges)| (script, ranges)).collect())
+    Ok(asts.into_iter().map(|(_, script)| script).collect())
 }
 
 // Define plugin module.

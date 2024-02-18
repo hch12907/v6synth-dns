@@ -5,13 +5,14 @@
 // https://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
-use std::{io, sync::Arc};
+use std::{io, net::Ipv4Addr, sync::Arc};
 
-use hickory_proto::{op::Query, rr::{rdata::AAAA, RData}};
+use hickory_proto::{
+    op::Query,
+    rr::{rdata::AAAA, RData},
+};
 use hickory_resolver::lookup::Lookup;
 use hickory_resolver::name_server::TokioConnectionProvider;
-use ipnetwork::Ipv4Network;
-use rhai::AST;
 use tracing::{debug, info};
 
 use hickory_server::{
@@ -27,7 +28,7 @@ use hickory_server::{
     store::forwarder::ForwardConfig,
 };
 
-use crate::script::ScriptExecution;
+use crate::script::{Script, ScriptExecution};
 
 /// An authority that will forward resolutions to upstream resolvers.
 ///
@@ -35,7 +36,7 @@ use crate::script::ScriptExecution;
 pub struct V6SynthAuthority {
     origin: LowerName,
     resolver: TokioAsyncResolver,
-    scripts: Vec<(AST, Vec<Ipv4Network>)>,
+    scripts: Vec<Script>,
 }
 
 impl V6SynthAuthority {
@@ -44,7 +45,7 @@ impl V6SynthAuthority {
         origin: Name,
         _zone_type: ZoneType,
         config: &ForwardConfig,
-        scripts: Vec<(AST, Vec<Ipv4Network>)>,
+        scripts: Vec<Script>,
     ) -> Result<Self, String> {
         info!("loading forwarder config: {}", origin);
 
@@ -129,52 +130,72 @@ impl Authority for V6SynthAuthority {
         // upstream DNS server returns no AAAA record, we can intervene if
         // the website is behind a CDN
         let has_aaaa = resolve
-                .as_ref()
-                .map(|lookup| lookup.record_iter())
-                .map(|mut recs| recs.any(|rec| rec.record_type() == RecordType::AAAA))
-                .unwrap_or(false);
+            .as_ref()
+            .map(|lookup| lookup.record_iter())
+            .map(|mut recs| recs.any(|rec| rec.record_type() == RecordType::AAAA))
+            .unwrap_or(false);
 
         if rtype == RecordType::AAAA && !has_aaaa {
-            info!("{} is IPv4-only, yet AAAA was requested. Attempting AAAA synthesis", &name);
-            let a = self
+            info!(
+                "{} is IPv4-only, yet AAAA was requested. Attempting AAAA synthesis",
+                &name
+            );
+            let records = self
                 .resolver
                 .lookup(name.clone(), RecordType::A)
                 .await
                 .map(|lookup| {
                     lookup
                         .record_iter()
-                        .filter(|rec| rec.record_type() == RecordType::A)
-                        .flat_map(|rec| rec.data())
-                        .flat_map(|data| match data {
-                            RData::A(addr) => Some(addr.0),
-                            _ => None,
-                        })
+                        .flat_map(|rec| rec.data().cloned())
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
 
-            for (script, range) in &self.scripts {
+            for script in &self.scripts {
                 // check if the address in A record is in range of any script
-                let ipv4 = a
+                let ipv4 = records
                     .iter()
-                    .find(|addr| range.iter().any(|network| network.contains(**addr)));
+                    .filter_map(|data| match data {
+                        RData::A(a) => Some(a.0.clone()),
+                        _ => None,
+                    })
+                    .find(|addr| {
+                        script
+                            .ipv4_ranges()
+                            .iter()
+                            .any(|network| network.contains(*addr))
+                    });
 
-                if let Some(ipv4) = ipv4 {
-                    let aaaa = ScriptExecution::from_ast(script)
-                        .execute(name.to_string(), *ipv4, self.resolver.clone())
+                let cname = if !script.cname_filter().is_empty() {
+                    records
+                        .iter()
+                        .filter_map(|data| match data {
+                            RData::CNAME(cname) => Some(cname.0.to_string()),
+                            _ => None,
+                        })
+                        .find(|cname| cname.ends_with(script.cname_filter()))
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
+
+                if ipv4.is_some() || !cname.is_empty() {
+                    let ipv4 = ipv4.unwrap_or(Ipv4Addr::new(0, 0, 0, 0));
+
+                    let aaaa = ScriptExecution::from_ast(script.ast())
+                        .execute(name.to_string(), ipv4, cname, self.resolver.clone())
                         .await;
 
                     if let Some(ipv6) = aaaa {
                         let record = Record::from_rdata(name.into(), 1, RData::AAAA(AAAA(ipv6)));
 
                         let mut query = Query::new();
-                        query
-                            .set_name(name.into())
-                            .set_query_type(RecordType::AAAA);
+                        query.set_name(name.into()).set_query_type(RecordType::AAAA);
 
                         let lookup = Lookup::new_with_max_ttl(query, Arc::from([record]));
 
-                        return Ok(ForwardLookup(lookup))
+                        return Ok(ForwardLookup(lookup));
                     }
                 }
             }

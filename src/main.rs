@@ -302,7 +302,8 @@ struct Cli {
     pub(crate) zonedir: Option<PathBuf>,
 
     /// Path to the root directory for all script files.
-    #[clap(short = 'z', long = "scriptdir", value_name = "DIR", value_hint=clap::ValueHint::DirPath)]
+    /// By default it points to the scripts directory in zonedir
+    #[clap(short = 's', long = "scriptdir", value_name = "DIR", value_hint=clap::ValueHint::DirPath)]
     pub(crate) scriptdir: Option<PathBuf>,
 
     /// Listening port for DNS queries,
@@ -352,7 +353,12 @@ fn main() {
     let directory_config = config.get_directory().to_path_buf();
     let zonedir = args.zonedir.clone();
     let zone_dir = zonedir.unwrap_or_else(|| directory_config.clone());
-    let script_dir = args.scriptdir.clone().unwrap_or_else(|| zone_dir.clone());
+    let script_dir = args.scriptdir.clone()
+        .unwrap_or_else(|| {
+            let mut script_dir = zone_dir.clone();
+            script_dir.push("scripts");
+            script_dir
+        });
 
     // TODO: allow for num threads configured...
     let mut runtime = runtime::Builder::new_multi_thread()

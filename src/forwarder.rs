@@ -11,7 +11,7 @@ use hickory_proto::{
     op::Query,
     rr::{rdata::AAAA, RData},
 };
-use hickory_resolver::lookup::Lookup;
+use hickory_resolver::{error::ResolveErrorKind, lookup::Lookup};
 use hickory_resolver::name_server::TokioConnectionProvider;
 use tracing::{debug, info};
 
@@ -183,7 +183,7 @@ impl Authority for V6SynthAuthority {
                     String::new()
                 };
 
-                if ipv4.is_some() || !cname.is_empty() {
+                if (!script.ipv4_ranges().is_empty() && ipv4.is_some()) || !cname.is_empty() {
                     let (ipv4, size) = ipv4.unwrap_or((Ipv4Addr::new(0, 0, 0, 0), 0));
 
                     let aaaa = ScriptExecution::from_ast(script.ast())
@@ -204,7 +204,17 @@ impl Authority for V6SynthAuthority {
             }
         }
 
-        resolve.map(ForwardLookup).map_err(LookupError::from)
+        resolve.map(ForwardLookup).map_err(|e| match e.kind() {
+            ResolveErrorKind::NoRecordsFound { response_code, .. } => {
+                if *response_code != ResponseCode::NoError {
+                    LookupError::from(*response_code)
+                } else {
+                    LookupError::NameExists
+                }
+            }
+
+            _ => LookupError::ResolveError(e),
+        })
     }
 
     async fn search(

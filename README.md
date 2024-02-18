@@ -1,13 +1,13 @@
 # v6synth-dns
 
-A DNS server which attempts to synthesise AAAA records for websites that use a
+A DNS forwarder which attempts to synthesise AAAA records for websites that use a
 dual-stacked CDN.
 
 The synthesis of AAAA occurs in the scripts (check them out [here](./config/scripts)).
 
 Inspired by https://gitlab.com/miyurusankalpa/IPv6-dns-server.
 
-# Building
+## Building
 
 ```
 cargo build --release
@@ -15,7 +15,7 @@ cargo build --release
 
 The binary is located inside `./target/release/`.
 
-# Running
+## Running
 
 Assuming your configuration TOML is located at `./config/named.toml`,
 the root directory of your zones is `./config/`, and you want the server

@@ -39,6 +39,7 @@ enum ScriptCommand {
     ResolveA(String),
     ResolveAAAA(String),
     ResolveCNAME(String),
+    ResolveCNAMEChain(String),
     ResolveNS(String),
     ResolveSOA(String),
     ResolveTXT(String),
@@ -68,6 +69,7 @@ impl ScriptResolver {
                     "A" => ScriptCommand::ResolveA(hostname),
                     "AAAA" => ScriptCommand::ResolveAAAA(hostname),
                     "CNAME" => ScriptCommand::ResolveCNAME(hostname),
+                    "CNAME_CHAIN" => ScriptCommand::ResolveCNAMEChain(hostname),
                     "NS" => ScriptCommand::ResolveNS(hostname),
                     "SOA" => ScriptCommand::ResolveSOA(hostname),
                     "TXT" => ScriptCommand::ResolveTXT(hostname),
@@ -106,7 +108,7 @@ impl ScriptResolver {
                     .await
                     .ok();
 
-                    let reply = reply
+                    reply
                         .and_then(|result| result.ok())
                         .and_then(|lookup| {
                             lookup
@@ -117,17 +119,12 @@ impl ScriptResolver {
                                     _ => None,
                                 })
                         })
-                        .unwrap_or_default();
-
-                    self.channel_to_script
-                        .send(ScriptReply::Resolved(reply))
-                        .await
-                        .unwrap();
+                        .unwrap_or_default()
                 }};
             }
 
             loop {
-                match self.channel_to_host.recv().await {
+                let reply = match self.channel_to_host.recv().await {
                     Ok(ScriptCommand::ResolveA(hostname)) => {
                         dns_record!(hostname, RecordType::A, RData::A)
                     }
@@ -136,6 +133,28 @@ impl ScriptResolver {
                     }
                     Ok(ScriptCommand::ResolveCNAME(hostname)) => {
                         dns_record!(hostname, RecordType::CNAME, RData::CNAME)
+                    }
+                    Ok(ScriptCommand::ResolveCNAMEChain(hostname)) => {
+                        let reply = timeout(
+                            Duration::from_secs(1),
+                            // we can't get a CNAME chain if we queried for CNAME 
+                            resolver.lookup(hostname, RecordType::A),
+                        )
+                        .await
+                        .ok();
+
+                        reply
+                            .and_then(|result| result.ok())
+                            .map(|lookup| {
+                                let mut cname = String::new();
+                                for record in lookup.record_iter() {
+                                    if let Some(RData::CNAME(data)) = record.data() {
+                                        cname = data.to_string();
+                                    }
+                                }
+                                cname
+                            })
+                            .unwrap_or_default()
                     }
                     Ok(ScriptCommand::ResolveNS(hostname)) => {
                         dns_record!(hostname, RecordType::NS, RData::NS)
@@ -147,7 +166,12 @@ impl ScriptResolver {
                         dns_record!(hostname, RecordType::TXT, RData::TXT)
                     }
                     Err(async_channel::RecvError) => break,
-                }
+                };
+
+                self.channel_to_script
+                    .send(ScriptReply::Resolved(reply))
+                    .await
+                    .unwrap();
             }
         })
         .await;

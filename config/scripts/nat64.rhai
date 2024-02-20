@@ -11,5 +11,6 @@ fn init() {
 fn main(hostname, ipv4, prefix_size, cname) {
     const NAT64_PREFIX = "64:ff9b::";
 
-    return NAT64_PREFIX + ipv4;
+    // uncomment to enable this script
+    //return NAT64_PREFIX + ipv4;
 }

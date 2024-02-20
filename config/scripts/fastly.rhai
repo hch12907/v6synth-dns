@@ -29,7 +29,7 @@ fn main(hostname, ipv4, prefix_size, cname) {
 
     // if the domain is without www, try to resolve for CNAME using it
     else if !hostname.starts_with("www.") && hostname.split('.').len() == 3 {
-        let cname = resolve("www." + hostname, "CNAME");
+        let cname = resolve("www." + hostname, "CNAME_CHAIN");
 
         if cname.ends_with("map.fastly.net.") && !cname.starts_with("ipv4") {
             map = cname;
@@ -38,7 +38,11 @@ fn main(hostname, ipv4, prefix_size, cname) {
 
     let dualstack_aaaa = "";
 
-    if !map.is_empty() {
+    // if we are lucky, the CNAME is already dualstack, although that begs the
+    // question why we didn't get AAAA out of it
+    if !map.is_empty() && map.starts_with("dualstack.") {
+        dualstack_aaaa = resolve(map, "AAAA");
+    } else if !map.is_empty() {
         let ds_cname = "dualstack." + map;
         dualstack_aaaa = resolve(ds_cname, "AAAA");
     }

@@ -26,7 +26,7 @@ dnssec-ring = [
 dnssec = []
 recursor = ["hickory-server/recursor"]
 # Recursive Resolution is Experimental!
-resolver = ["hickory-server/resolver"]
+resolver = ["hickory-server/resolver", "dep:hickory-resolver"]
 sqlite = ["hickory-server/sqlite"]
 
 # TODO: Need to figure out how to be consistent with ring/openssl usage...
@@ -86,10 +86,10 @@ clap = { version = "4.5.1", default-features = false, features = [
 futures-util = { version = "0.3.30", default-features = false, features = [
     "std",
 ] }
-hickory-resolver = "0.24.0"
-hickory-client = "0.24.0"
-hickory-proto = "0.24.0"
-hickory-server = { version = "0.24.0", features = ["toml"] }
+hickory-client = "0.25.0-alpha.2"
+hickory-proto = "0.25.0-alpha.2"
+hickory-resolver = { version = "0.25.0-alpha.2", optional = true }
+hickory-server = { version = "0.25.0-alpha.2", features = ["toml"] }
 rustls = { version = "0.22.2", optional = true }
 time = "0.3.34"
 tokio = { version = "1.36.0", features = ["time", "rt", "sync"] }
@@ -107,11 +107,11 @@ ipnetwork = "0.20.0"
 async-channel = "2.2.0"
 
 [dev-dependencies]
-hickory-proto = { version = "0.24.0", features = [
+hickory-proto = { version = "0.25.0-alpha.2", features = [
     "testing",
     "dns-over-native-tls",
 ] }
-hickory-resolver = "0.24.0"
+hickory-resolver = "0.25.0-alpha.2"
 native-tls = "0.2.11"
 regex = "1.10.3"
 webpki-roots = "0.26.1"

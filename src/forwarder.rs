@@ -8,8 +8,7 @@
 use std::{io, net::Ipv4Addr, sync::Arc};
 
 use hickory_proto::{
-    op::Query,
-    rr::{rdata::AAAA, RData},
+    error::ProtoErrorKind, op::Query, rr::{rdata::AAAA, RData}
 };
 use hickory_resolver::{error::ResolveErrorKind, lookup::Lookup, Hosts};
 use hickory_resolver::name_server::TokioConnectionProvider;
@@ -28,7 +27,7 @@ use hickory_server::{
     store::forwarder::ForwardConfig,
 };
 
-use crate::script::{Script, ScriptExecution};
+use crate::script::{LoadedScripts, ScriptExecution};
 
 /// An authority that will forward resolutions to upstream resolvers.
 ///
@@ -36,7 +35,7 @@ use crate::script::{Script, ScriptExecution};
 pub struct V6SynthAuthority {
     origin: LowerName,
     resolver: TokioAsyncResolver,
-    scripts: Vec<Script>,
+    loaded_scripts: LoadedScripts,
     hosts: Option<Hosts>,
 }
 
@@ -46,7 +45,7 @@ impl V6SynthAuthority {
         origin: Name,
         _zone_type: ZoneType,
         config: &ForwardConfig,
-        scripts: Vec<Script>,
+        loaded_scripts: LoadedScripts,
     ) -> Result<Self, String> {
         info!("loading forwarder config: {}", origin);
 
@@ -84,7 +83,7 @@ impl V6SynthAuthority {
         Ok(Self {
             origin: origin.into(),
             resolver,
-            scripts,
+            loaded_scripts,
             hosts,
         })
     }
@@ -151,11 +150,12 @@ impl Authority for V6SynthAuthority {
             .map(|mut recs| recs.any(|rec| rec.record_type() == RecordType::AAAA))
             .unwrap_or(false);
 
-        if rtype == RecordType::AAAA && !has_aaaa {
+        if rtype == RecordType::AAAA && !has_aaaa  {
             info!(
                 "{} is IPv4-only, yet AAAA was requested. Attempting AAAA synthesis",
                 &name
             );
+
             let records = self
                 .resolver
                 .lookup(name.clone(), RecordType::A)
@@ -163,12 +163,12 @@ impl Authority for V6SynthAuthority {
                 .map(|lookup| {
                     lookup
                         .record_iter()
-                        .flat_map(|rec| rec.data().cloned())
+                        .map(|rec| rec.data().clone())
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
 
-            for script in &self.scripts {
+            for script in &self.loaded_scripts.scripts {
                 // check if the address in A record is in range of any script
                 let ipv4 = records
                     .iter()
@@ -221,14 +221,12 @@ impl Authority for V6SynthAuthority {
         }
 
         resolve.map(ForwardLookup::Resolver).map_err(|e| match e.kind() {
-            ResolveErrorKind::NoRecordsFound { response_code, .. } => {
-                if *response_code != ResponseCode::NoError {
-                    LookupError::from(*response_code)
-                } else {
-                    LookupError::NameExists
+            ResolveErrorKind::Proto(p) => match p.kind() {
+                ProtoErrorKind::NoRecordsFound { response_code, .. } => {
+                    LookupError::ResponseCode(*response_code)
                 }
-            }
-
+                _ => LookupError::ResolveError(e),
+            },
             _ => LookupError::ResolveError(e),
         })
     }
@@ -261,6 +259,7 @@ impl Authority for V6SynthAuthority {
 /// A structure that holds the results of a forwarding lookup.
 ///
 /// This exposes an iterator interface for consumption downstream.
+#[derive(Debug, Clone)]
 pub enum ForwardLookup {
     Hosts(Lookup),
     Resolver(ResolverLookup),

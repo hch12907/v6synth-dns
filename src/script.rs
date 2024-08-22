@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::Path;
 use std::time::Duration;
@@ -14,6 +15,11 @@ use serde::de::IntoDeserializer;
 use serde::Deserialize;
 use tokio::time::timeout;
 use tracing::{error, info, warn};
+
+pub struct LoadedScripts {
+    pub scripts: Vec<Script>,
+    pub blacklist: HashSet<String>,
+}
 
 pub struct Script {
     ast: AST,
@@ -57,7 +63,7 @@ struct ScriptResolver {
 }
 
 impl ScriptResolver {
-    fn new(engine: &mut Engine) -> Self {
+    fn register(engine: &mut Engine) -> Self {
         // TH = To Host, TS = To Script
         let (ts_sender, ts_receiver) = async_channel::bounded(1);
         let (th_sender, th_receiver) = async_channel::bounded(1);
@@ -115,7 +121,7 @@ impl ScriptResolver {
                                 .record_iter()
                                 .nth(0)
                                 .and_then(|rec| match rec.data() {
-                                    Some($rdata(data)) => Some(data.to_string()),
+                                    $rdata(data) => Some(data.to_string()),
                                     _ => None,
                                 })
                         })
@@ -148,7 +154,7 @@ impl ScriptResolver {
                             .map(|lookup| {
                                 let mut cname = String::new();
                                 for record in lookup.record_iter() {
-                                    if let Some(RData::CNAME(data)) = record.data() {
+                                    if let RData::CNAME(data) = record.data() {
                                         cname = data.to_string();
                                     }
                                 }
@@ -193,7 +199,9 @@ pub struct ScriptExecution {
 impl ScriptExecution {
     pub fn from_ast(ast: &AST) -> Self {
         let mut engine = Engine::new();
-        let resolver = ScriptResolver::new(&mut engine);
+        
+        // this adds the resolve(hostname, record_type) function to the scripts
+        let resolver = ScriptResolver::register(&mut engine);
 
         Self {
             engine,
@@ -233,12 +241,13 @@ impl ScriptExecution {
     }
 }
 
-pub fn load_scripts(dir_path: &Path) -> Result<Vec<Script>, Box<EvalAltResult>> {
+pub fn load_scripts(dir_path: &Path) -> Result<LoadedScripts, Box<EvalAltResult>> {
     let script_dir = dir_path
         .read_dir()
         .expect("unable to open script directory");
 
     let mut asts = Vec::new();
+    let mut blacklist = HashSet::new();
 
     let engine = Engine::new();
 
@@ -269,6 +278,7 @@ pub fn load_scripts(dir_path: &Path) -> Result<Vec<Script>, Box<EvalAltResult>> 
                     priority: Option<i64>,
                     ipv4_ranges: Vec<Ipv4Network>,
                     cname_filter: Option<String>,
+                    blacklisted_names: Option<Vec<String>>,
                 }
 
                 if let Ok(val) = InitInfo::deserialize(info.into_deserializer()) {
@@ -278,7 +288,12 @@ pub fn load_scripts(dir_path: &Path) -> Result<Vec<Script>, Box<EvalAltResult>> 
                         ipv4_ranges: val.ipv4_ranges,
                         cname_filter: val.cname_filter.unwrap_or_default(),
                     };
+
                     asts.push((priority, script));
+
+                    if let Some(names) = val.blacklisted_names {
+                        blacklist.extend(names.iter().cloned());
+                    }
                 } else {
                     panic!("the init() of a script returned unexpected value");
                 }
@@ -288,7 +303,12 @@ pub fn load_scripts(dir_path: &Path) -> Result<Vec<Script>, Box<EvalAltResult>> 
 
     asts.sort_by_key(|(priority, _)| -priority);
 
-    Ok(asts.into_iter().map(|(_, script)| script).collect())
+    let loaded = LoadedScripts {
+        scripts: asts.into_iter().map(|(_, script)| script).collect(),
+        blacklist,
+    };
+
+    Ok(loaded)
 }
 
 // Define plugin module.

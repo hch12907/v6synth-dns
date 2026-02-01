@@ -1,117 +1,96 @@
 [package]
 name = "hickory-dns-v6synth"
-version = "0.1.0"
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+version = "0.2.0"
+edition = "2024"
 
 [features]
-default = ["native-certs", "ascii-art", "dns-over-rustls"]
+default = ["sqlite", "resolver", "tls-ring", "https-ring", "dnssec-ring", "rustls-platform-verifier", "ascii-art"]
 
 # if enabled, the hickory-dns binary will print ascii-art on start, disable to reduce the binary size
 ascii-art = []
 
-dnssec-openssl = [
-    "dnssec",
-    "hickory-client/dnssec-openssl",
-    "hickory-proto/dnssec-openssl",
-    "hickory-server/dnssec-openssl",
-]
-dnssec-ring = [
-    "dnssec",
-    "hickory-client/dnssec-ring",
-    "hickory-proto/dnssec-ring",
-    "hickory-server/dnssec-ring",
-]
-dnssec = []
+blocklist = ["hickory-server/blocklist"]
 recursor = ["hickory-server/recursor"]
 # Recursive Resolution is Experimental!
-resolver = ["hickory-server/resolver", "dep:hickory-resolver"]
-sqlite = ["hickory-server/sqlite"]
+resolver = ["hickory-server/resolver"]
+sqlite = ["hickory-server/sqlite", "dep:rusqlite"]
+prometheus-metrics = ["metrics", "dep:http", "dep:hyper", "dep:hyper-util", "dep:metrics-exporter-prometheus", "dep:tokio-util"]
+metrics = ["hickory-server/metrics", "dep:metrics", "dep:metrics-process"]
 
-# TODO: Need to figure out how to be consistent with ring/openssl usage...
-# dns-over-https-openssl = ["dns-over-openssl", "hickory-client/dns-over-https-openssl", "dns-over-https"]
-dns-over-https-rustls = [
-    "dns-over-https",
-    "dns-over-rustls",
-    "hickory-proto/dns-over-https-rustls",
-    "hickory-client/dns-over-https-rustls",
-    "hickory-server/dns-over-https-rustls",
-]
-dns-over-https = ["hickory-server/dns-over-https"]
-dns-over-quic = ["dns-over-rustls", "hickory-server/dns-over-quic"]
-dns-over-h3 = ["dns-over-rustls", "hickory-server/dns-over-h3"]
+tls-aws-lc-rs = ["hickory-server/tls-aws-lc-rs", "__tls"]
+https-aws-lc-rs = ["hickory-server/https-aws-lc-rs", "tls-aws-lc-rs", "__https"]
+quic-aws-lc-rs = ["hickory-server/quic-aws-lc-rs", "tls-aws-lc-rs", "__quic"]
+h3-aws-lc-rs = ["hickory-server/h3-aws-lc-rs", "quic-aws-lc-rs", "__h3"]
 
-# TODO: migrate all tls and tls-openssl features to dns-over-tls, et al
-dns-over-openssl = [
-    "dns-over-tls",
-    "dnssec-openssl",
-    "hickory-proto/dns-over-openssl",
-    "hickory-client/dns-over-openssl",
-    "hickory-server/dns-over-openssl",
-]
-dns-over-rustls = [
-    "dns-over-tls",
-    "dnssec-ring",
-    "rustls",
-    "hickory-proto/dns-over-rustls",
-    "hickory-client/dns-over-rustls",
-    "hickory-server/dns-over-rustls",
-]
-dns-over-tls = []
+tls-ring = ["hickory-server/tls-ring", "__tls"]
+https-ring = ["hickory-server/https-ring", "tls-ring", "__https"]
+quic-ring = ["hickory-server/quic-ring", "tls-ring", "__quic"]
+h3-ring = ["hickory-server/h3-ring", "quic-ring", "__h3"]
 
-# This is a deprecated feature...
-tls-openssl = ["dns-over-openssl"]
-tls = ["dns-over-openssl"]
+__tls = ["dep:rustls"]
+__https = []
+__quic = []
+__h3 = []
 
-# WARNING: there is a bug in the mutual tls auth code at the moment see issue #100
-# mtls = ["hickory-client/mtls"]
+dnssec-aws-lc-rs = ["hickory-server/dnssec-aws-lc-rs", "dep:rustls-pki-types", "__dnssec"]
+dnssec-ring = ["hickory-server/dnssec-ring", "dep:rustls-pki-types", "__dnssec"]
+__dnssec = []
 
-webpki-roots = ["hickory-client/webpki-roots", "hickory-resolver/webpki-roots"]
-native-certs = ["hickory-client/native-certs", "hickory-resolver/native-certs"]
-rustls = ["dep:rustls"]
+webpki-roots = ["hickory-server/webpki-roots"]
+rustls-platform-verifier = ["hickory-server/rustls-platform-verifier"]
 
 [dependencies]
+async-trait = "0.1.43"
+cfg-if = "^1.0.0"
 # clap features:
-# - suggestion for advanced help with error in cli
-# - derive for clap derive api
-# - help to generate --help
-clap = { version = "4.5.1", default-features = false, features = [
-    "std",
-    "cargo",
-    "help",
-    "derive",
-    "suggestions",
-] }
-futures-util = { version = "0.3.30", default-features = false, features = [
-    "std",
-] }
-hickory-client = "0.25.0-alpha.2"
-hickory-proto = "0.25.0-alpha.2"
-hickory-resolver = { version = "0.25.0-alpha.2", optional = true }
-hickory-server = { version = "0.25.0-alpha.2", features = ["toml"] }
-rustls = { version = "0.22.2", optional = true }
-time = "0.3.34"
-tokio = { version = "1.36.0", features = ["time", "rt", "sync"] }
-tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.18", features = [
-    "std",
-    "fmt",
-    "env-filter",
-] }
-async-trait = "0.1.77"
+# - `suggestions` for advanced help with error in cli
+# - `derive` for clap derive api
+# - `help` to generate --help
+clap = { version = "4.0.0", default-features = false, features = ["cargo", "derive", "help", "std", "suggestions"] }
+futures-util = { version = "0.3.5", default-features = false, features = ["std"] }
+http = { version = "1.1", optional = true }
+hyper = { version = "1.6.0", features = ["server"], optional = true }
+hyper-util = { version = "0.1.11", features = ["server-auto", "server-graceful", "tokio"], optional = true }
+ipnet = { version = "2.3.0", features = ["serde"] }
+# rusqlite is actually only needed for test situations, but we need an optional dependency
+# here so we can disable it for MSRV tests (rusqlite only supports latest stable)
+rusqlite = { version = "0.35", features = ["bundled", "time"], optional = true }
+socket2 = "0.5"
+rustls = { version = "0.23.23", optional = true }
+rustls-pki-types = { version = "1.10", optional = true }
+serde = { version = "1.0", features = ["derive"] }
+time = "0.3"
+tracing = "0.1.30"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "std"] }
+tokio = { version = "1.21", features = ["time", "rt", "signal"] }
+tokio-util = { version = "0.7.9", optional = true }
+toml = "0.8.14"
+hickory-client = "0.25.2"
+hickory-proto = "0.25.2"
+hickory-resolver = "0.25.2"
+hickory-server = { version = "0.25.2", features = ["toml"] }
+metrics = { version = "0.24.1", optional = true }
+metrics-exporter-prometheus = { version = "0.16.2", optional = true }
+metrics-process = { version = "2.4.0", optional = true }
 rhai = { version = "1.17.1", features = ["serde", "sync"] }
-serde = "1.0.196"
-serde_derive = "1.0.196"
 ipnetwork = "0.20.0"
 async-channel = "2.2.0"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
-hickory-proto = { version = "0.25.0-alpha.2", features = [
-    "testing",
-    "dns-over-native-tls",
-] }
-hickory-resolver = "0.25.0-alpha.2"
-native-tls = "0.2.11"
-regex = "1.10.3"
-webpki-roots = "0.26.1"
+futures-executor = { version = "0.3.5", default-features = false, features = ["std"] }
+regex = "1.3.4"
+hickory-proto = { version = "0.25.2", features = ["testing", "std"] }
+hickory-resolver = "0.25.2"
+toml = "0.8.14"
+webpki-roots = "0.26"
+# metrics tests
+reqwest = { version = "0.12.12", default-features = false }
+prometheus-parse = { version = "0.2.5" }
+
+[package.metadata.cargo-all-features]
+skip_optional_dependencies = true
+max_combination_size = 2
+denylist = ["__tls", "__https", "__quic", "__h3", "__dnssec"]

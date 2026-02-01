@@ -8,23 +8,19 @@
 use std::{io, net::Ipv4Addr, sync::Arc};
 
 use hickory_proto::{
-    error::ProtoErrorKind, op::Query, rr::{rdata::AAAA, RData}
+    ProtoErrorKind, op::Query, rr::{rdata::AAAA, RData}
 };
-use hickory_resolver::{error::ResolveErrorKind, lookup::Lookup, Hosts};
+use hickory_resolver::{Hosts, ResolveErrorKind, config::ResolveHosts, lookup::Lookup};
 use hickory_resolver::name_server::TokioConnectionProvider;
 use tracing::{debug, info};
 
 use hickory_server::{
     authority::{
-        Authority, LookupError, LookupObject, LookupOptions, MessageRequest, UpdateResult, ZoneType,
-    },
-    proto::{
+        Authority, LookupControlFlow, LookupError, LookupObject, LookupOptions, MessageRequest, Nsec3QueryInfo, UpdateResult, ZoneType
+    }, dnssec::NxProofKind, proto::{
         op::ResponseCode,
         rr::{LowerName, Name, Record, RecordType},
-    },
-    resolver::{config::ResolverConfig, lookup::Lookup as ResolverLookup, TokioAsyncResolver},
-    server::RequestInfo,
-    store::forwarder::ForwardConfig,
+    }, resolver::{TokioResolver, config::ResolverConfig, lookup::Lookup as ResolverLookup}, server::RequestInfo, store::forwarder::ForwardConfig
 };
 
 use crate::script::{LoadedScripts, ScriptExecution};
@@ -34,7 +30,7 @@ use crate::script::{LoadedScripts, ScriptExecution};
 /// This uses the hickory-resolver for resolving requests.
 pub struct V6SynthAuthority {
     origin: LowerName,
-    resolver: TokioAsyncResolver,
+    resolver: TokioResolver,
     loaded_scripts: LoadedScripts,
     hosts: Option<Hosts>,
 }
@@ -73,9 +69,13 @@ impl V6SynthAuthority {
 
         let config = ResolverConfig::from_parts(None, vec![], name_servers);
 
-        let hosts = options.use_hosts_file.then(|| Hosts::new());
+        let hosts = (options.use_hosts_file != ResolveHosts::Never).then(|| Hosts::from_system().unwrap_or_default());
 
-        let resolver = TokioAsyncResolver::new(config, options, TokioConnectionProvider::default());
+        let resolver = TokioResolver::builder_with_config(config, TokioConnectionProvider::default())
+            .with_options(options)
+            .build();
+        
+        //TokioResolver::new(config, options, TokioConnectionProvider::default());
 
         info!("forward resolver configured: {}: ", origin);
 
@@ -93,9 +93,9 @@ impl V6SynthAuthority {
 impl Authority for V6SynthAuthority {
     type Lookup = ForwardLookup;
 
-    /// Always Forward
+    /// Always External
     fn zone_type(&self) -> ZoneType {
-        ZoneType::Forward
+        ZoneType::External
     }
 
     /// Always false for Forward zones
@@ -122,7 +122,7 @@ impl Authority for V6SynthAuthority {
         name: &LowerName,
         rtype: RecordType,
         _lookup_options: LookupOptions,
-    ) -> Result<Self::Lookup, LookupError> {
+    ) -> LookupControlFlow<Self::Lookup> {
         // TODO: make this an error?
         debug_assert!(self.origin.zone_of(name));
 
@@ -135,7 +135,7 @@ impl Authority for V6SynthAuthority {
             name.set_fqdn(false);
 
             if let Some(lookup) = hosts.lookup_static_host(&Query::query(name, rtype)) {
-                return Ok(ForwardLookup::Hosts(lookup))
+                return LookupControlFlow::Continue(Ok(ForwardLookup::Hosts(lookup)))
             }
         };
 
@@ -214,28 +214,30 @@ impl Authority for V6SynthAuthority {
 
                         let lookup = Lookup::new_with_max_ttl(query, Arc::from([record]));
 
-                        return Ok(ForwardLookup::Resolver(lookup));
+                        return LookupControlFlow::Continue(Ok(ForwardLookup::Resolver(lookup)));
                     }
                 }
             }
         }
 
-        resolve.map(ForwardLookup::Resolver).map_err(|e| match e.kind() {
-            ResolveErrorKind::Proto(p) => match p.kind() {
-                ProtoErrorKind::NoRecordsFound { response_code, .. } => {
-                    LookupError::ResponseCode(*response_code)
-                }
+        LookupControlFlow::Continue(
+            resolve.map(ForwardLookup::Resolver).map_err(|e| match e.kind() {
+                ResolveErrorKind::Proto(p) => match p.kind() {
+                    ProtoErrorKind::NoRecordsFound { response_code, .. } => {
+                        LookupError::ResponseCode(*response_code)
+                    }
+                    _ => LookupError::ResolveError(e),
+                },
                 _ => LookupError::ResolveError(e),
-            },
-            _ => LookupError::ResolveError(e),
-        })
+            }
+        ))
     }
 
     async fn search(
         &self,
         request_info: RequestInfo<'_>,
         lookup_options: LookupOptions,
-    ) -> Result<Self::Lookup, LookupError> {
+    ) -> LookupControlFlow<Self::Lookup> {
         self.lookup(
             request_info.query.name(),
             request_info.query.query_type(),
@@ -248,11 +250,26 @@ impl Authority for V6SynthAuthority {
         &self,
         _name: &LowerName,
         _lookup_options: LookupOptions,
-    ) -> Result<Self::Lookup, LookupError> {
-        Err(LookupError::from(io::Error::new(
+    ) -> LookupControlFlow<Self::Lookup> {
+        LookupControlFlow::Continue(Err(LookupError::from(io::Error::new(
             io::ErrorKind::Other,
             "Getting NSEC records is unimplemented for the forwarder",
-        )))
+        ))))
+    }
+
+    async fn get_nsec3_records(
+        &self,
+        _info: Nsec3QueryInfo<'_>,
+        _lookup_options: LookupOptions,
+    ) -> LookupControlFlow<Self::Lookup> {
+        LookupControlFlow::Continue(Err(LookupError::from(io::Error::new(
+            io::ErrorKind::Other,
+            "getting NSEC3 records is unimplemented for the forwarder",
+        ))))
+    }
+
+    fn nx_proof_kind(&self) -> Option<&NxProofKind> {
+        None
     }
 }
 

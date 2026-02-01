@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use async_channel::{self, Receiver, Sender};
 use hickory_proto::rr::{RData, RecordType};
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 use ipnetwork::Ipv4Network;
 use rhai::def_package;
 use rhai::packages::{ArithmeticPackage, BasicArrayPackage, BasicMapPackage, LogicPackage};
@@ -103,7 +103,7 @@ impl ScriptResolver {
         }
     }
 
-    async fn execute_alongside_script(self, resolver: TokioAsyncResolver) {
+    async fn execute_alongside_script(self, resolver: TokioResolver) {
         let result = tokio::task::spawn(async move {
             macro_rules! dns_record {
                 ($hostname:expr, $record_type:expr, $rdata:path) => {{
@@ -216,7 +216,7 @@ impl ScriptExecution {
         ipv4: Ipv4Addr,
         size: u32,
         cname: String,
-        resolver: TokioAsyncResolver,
+        resolver: TokioResolver,
     ) -> Option<Ipv6Addr> {
         let args = (hostname, ipv4.to_string(), size as i64, cname);
 
@@ -273,7 +273,7 @@ pub fn load_scripts(dir_path: &Path) -> Result<LoadedScripts, Box<EvalAltResult>
                     .call_fn::<Dynamic>(&mut scope, &ast, "init", ())
                     .expect("a script failed to initialize");
 
-                #[derive(serde_derive::Deserialize, Debug)]
+                #[derive(serde::Deserialize, Debug)]
                 struct InitInfo {
                     priority: Option<i64>,
                     ipv4_ranges: Vec<Ipv4Network>,
